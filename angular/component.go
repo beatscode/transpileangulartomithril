@@ -22,6 +22,7 @@ type Component struct {
 }
 
 func (aComponent *Component) ParseScopeProperties() {
+	//Make sure $scope is first
 	//Get Scope Variables that are not functions
 	expression := `(?:\$scope\.)(?P<variable>\w+)\s+=\s+[^function]`
 	reg := regexp.MustCompile(expression)

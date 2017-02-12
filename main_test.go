@@ -19,7 +19,7 @@ func TestScopeObjectBuild(t *testing.T) {
 
 	componentString := `
     angular.module('myApp',['helloModule','hello2Module']);
-    angular.module('myApp').controller('testController',function($scope){
+    angular.module('myApp').controller('testController',function($scope,my_Otherservice){
         $scope.myvar = "123";
         $scope.list = [1,2,3,4,5];
         $scope.getListItems = function(){
@@ -138,4 +138,28 @@ func TestScopeFunctionBody(t *testing.T) {
 
 	//get "getListItems" function Body
 
+}
+
+func TestDirectoryScanning(t *testing.T) {
+
+	angularTemplateDir := "."
+	angularScriptsDir := "./test"
+
+	Start(angularScriptsDir, angularTemplateDir)
+	noOfComponents := len(app.Components)
+	if noOfComponents != 4 {
+		t.Error("Incorrent number of components", noOfComponents)
+	}
+
+	if len(app.Modules) != 2 {
+		t.Error("Invalid number of components")
+	}
+	//
+	// for _, m := range app.Modules {
+	// 	fmt.Println(m)
+	// }
+	//
+	// for _, component := range app.Components {
+	// 	fmt.Println(component.Name)
+	// }
 }

@@ -75,12 +75,13 @@ func (app *App) IntrospectScope() {
 }
 
 func (angular *App) Module(call otto.FunctionCall) otto.Value {
-
+	found := false
 	modulename := call.Argument(0).String()
+
 	//Find out what type of component this is
 	if call.Argument(1).Class() == "Array" {
 		deps, _ := call.Argument(1).Export()
-		found := false
+
 		for _, v := range angular.Modules {
 			if v.Name == modulename {
 				found = true
@@ -88,6 +89,16 @@ func (angular *App) Module(call otto.FunctionCall) otto.Value {
 		}
 		if !found {
 			module := AngularModule{Name: modulename, Dependencies: deps.([]string)}
+			angular.Modules = append(angular.Modules, module)
+		}
+	} else {
+		for _, v := range angular.Modules {
+			if v.Name == modulename {
+				found = true
+			}
+		}
+		if !found {
+			module := AngularModule{Name: modulename, Dependencies: nil}
 			angular.Modules = append(angular.Modules, module)
 		}
 	}
@@ -103,6 +114,17 @@ func (angular *App) Controller(call otto.FunctionCall) otto.Value {
 	ctrl.ParseScopeFunctions()
 	ctrl.ParseFunctionBodies()
 	angular.Components = append(angular.Components, ctrl)
+
+	return otto.Value{}
+}
+func (angular *App) Service(call otto.FunctionCall) otto.Value {
+	serviceName, _ := call.Argument(0).ToString()
+	functionBody, _ := call.Argument(1).ToString()
+
+	service := Component{Name: serviceName, Type: "service", FunctionBody: functionBody}
+	//TODO service are different than controllers
+	//parse the usual syntax properly
+	angular.Components = append(angular.Components, service)
 
 	return otto.Value{}
 }
