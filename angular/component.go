@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -12,19 +13,30 @@ import (
 
 //Component is one of the following: Controller,Directive,Factory,Service,Filter, etc
 type Component struct {
-	Type           string
-	Name           string
-	FunctionBody   string
-	TemplateStr    string
-	Functions      []string
-	FunctionBodies map[string]string
-	ScopeProperies []string
+	Type            string
+	Name            string
+	FunctionBody    string
+	TemplateStr     string
+	Functions       []string
+	FunctionBodies  map[string]string
+	ScopeProperties []string
+	ScopeObject     interface{}
+	VM              *otto.Otto
 }
+
+var WatchersMock = `var watchers={}`
+var ScopeObjectMock = `var scopeObj = {
+	'$on':function(eventName,func){
+		watchers[eventName] = func.toString();
+	}
+}`
 
 func (aComponent *Component) ParseScopeProperties() {
 	//Make sure $scope is first
 	//Get Scope Variables that are not functions
-	expression := `(?:\$scope\.)(?P<variable>\w+)\s+=\s+[^function]`
+	//Normally would use negative lookahead but
+	//not supported
+	expression := `(?:\$scope\.)(?P<variable>\w+)\s+=[^f]`
 	reg := regexp.MustCompile(expression)
 
 	matches := reg.FindAllStringSubmatch(aComponent.FunctionBody, -1)
@@ -40,12 +52,69 @@ func (aComponent *Component) ParseScopeProperties() {
 			scopeProperties = append(scopeProperties, v[1])
 		}
 	}
-	aComponent.ScopeProperies = scopeProperties
+
+	aComponent.ScopeProperties = scopeProperties
 }
 
+//ParseScopeValues attempts to export $sccope Values/Properties
+func (aComponent *Component) ParseScopeValues() {
+	var functionVM *otto.Otto
+	functionVM = otto.New()
+	functionVM.Object(ScopeObjectMock)
+	functionVM.Object(WatchersMock)
+	//Set Function Equal to var
+	functionAssignment := fmt.Sprintf(`var func = %s`, aComponent.FunctionBody)
+	functionVM.Set("controllerFunction", functionAssignment)
+	if _, err := functionVM.Run(`
+	    //Set and Run Function
+	    eval(controllerFunction)
+	    func(scopeObj)
+	`); err != nil {
+		panic(err)
+	}
+	var scopeObjectInterface interface{}
+	if scopeobject, err := functionVM.Get("scopeObj"); err == nil {
+		scopeObjectInterface, err = scopeobject.Export()
+		if err != nil {
+			panic(err)
+		}
+	}
+	aComponent.VM = functionVM
+
+	for key, prop := range scopeObjectInterface.(map[string]interface{}) {
+		if key == "$on" {
+			delete(scopeObjectInterface.(map[string]interface{}), key)
+			continue
+		}
+
+		//Check if item is a function
+		//If so then remove it
+		var found = false
+		for k := range aComponent.FunctionBodies {
+			fmt.Println("Function", k)
+			if key == k {
+				found = true
+			}
+		}
+		if found {
+			delete(scopeObjectInterface.(map[string]interface{}), key)
+			continue
+		}
+		//For Objects/Arrays get json string to represent value
+		switch reflect.TypeOf(prop).Kind() {
+		case reflect.Map, reflect.Slice:
+			if value, err := aComponent.VM.Run(`JSON.stringify(scopeObj.` + key + `)`); err == nil {
+				jsonValue := value.String()
+				scopeObjectInterface.(map[string]interface{})[key] = jsonValue
+			}
+			break
+		}
+	}
+	aComponent.ScopeObject = scopeObjectInterface
+}
 func (aComponent *Component) ParseScopeFunctions() {
 	//Get Scope Variables that are not functions
-	expression := `(?:\$scope\.)(?P<variable>\w+)\s+=\s+[function]`
+	expression := `(?:\$scope\.)(?P<variable>\w+)\s+=\s+function`
 	reg := regexp.MustCompile(expression)
 
 	matches := reg.FindAllStringSubmatch(aComponent.FunctionBody, -1)
@@ -68,7 +137,8 @@ func (aComponent *Component) ParseFunctionBodies() {
 
 	for _, function := range aComponent.Functions {
 		functionVM = otto.New()
-		functionVM.Object(`scopeObj = {}`)
+		functionVM.Object(ScopeObjectMock)
+		functionVM.Object(WatchersMock)
 		//Set Function Equal to var
 		functionAssignment := fmt.Sprintf(`var func = %s`, aComponent.FunctionBody)
 		functionVM.Set("controllerFunction", functionAssignment)

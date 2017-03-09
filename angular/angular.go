@@ -111,6 +111,7 @@ func (angular *App) Controller(call otto.FunctionCall) otto.Value {
 	ctrl := Component{Name: controllerName, Type: "controller", FunctionBody: functionBody}
 	ctrl.FindTemplateString(angular.TemplateDir)
 	ctrl.ParseScopeProperties()
+	ctrl.ParseScopeValues()
 	ctrl.ParseScopeFunctions()
 	ctrl.ParseFunctionBodies()
 	angular.Components = append(angular.Components, ctrl)
