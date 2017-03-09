@@ -25,6 +25,7 @@ type Component struct {
 }
 
 var WatchersMock = `var watchers={}`
+var JqueryMock = `var $ = {}`
 var ScopeObjectMock = `var scopeObj = {
 	'$on':function(eventName,func){
 		watchers[eventName] = func.toString();
@@ -55,13 +56,17 @@ func (aComponent *Component) ParseScopeProperties() {
 
 	aComponent.ScopeProperties = scopeProperties
 }
+func addMocks(vm *otto.Otto) {
+	vm.Object(ScopeObjectMock)
+	vm.Object(WatchersMock)
+	vm.Object(JqueryMock)
+}
 
 //ParseScopeValues attempts to export $sccope Values/Properties
 func (aComponent *Component) ParseScopeValues() {
 	var functionVM *otto.Otto
 	functionVM = otto.New()
-	functionVM.Object(ScopeObjectMock)
-	functionVM.Object(WatchersMock)
+	addMocks(functionVM)
 	//Set Function Equal to var
 	functionAssignment := fmt.Sprintf(`var func = %s`, aComponent.FunctionBody)
 	functionVM.Set("controllerFunction", functionAssignment)
@@ -137,8 +142,7 @@ func (aComponent *Component) ParseFunctionBodies() {
 
 	for _, function := range aComponent.Functions {
 		functionVM = otto.New()
-		functionVM.Object(ScopeObjectMock)
-		functionVM.Object(WatchersMock)
+		addMocks(functionVM)
 		//Set Function Equal to var
 		functionAssignment := fmt.Sprintf(`var func = %s`, aComponent.FunctionBody)
 		functionVM.Set("controllerFunction", functionAssignment)
