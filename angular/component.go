@@ -16,6 +16,7 @@ type Component struct {
 	Type            string
 	Name            string
 	FunctionBody    string
+	Dependencies    []string
 	TemplateStr     string
 	Functions       []string
 	FunctionBodies  map[string]string
@@ -37,7 +38,7 @@ func (aComponent *Component) ParseScopeProperties() {
 	//Get Scope Variables that are not functions
 	//Normally would use negative lookahead but
 	//not supported
-	expression := `(?:\$scope\.)(?P<variable>\w+)\s+=[^f]`
+	expression := `(?:\$scope\.)(?P<variable>\w+)\s+=\s+[^f]`
 	reg := regexp.MustCompile(expression)
 
 	matches := reg.FindAllStringSubmatch(aComponent.FunctionBody, -1)

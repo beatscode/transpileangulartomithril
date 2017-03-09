@@ -2,6 +2,7 @@ package angular
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/robertkrimen/otto/ast"
 	"github.com/robertkrimen/otto/parser"
@@ -106,9 +107,26 @@ func (angular *App) Module(call otto.FunctionCall) otto.Value {
 }
 func (angular *App) Controller(call otto.FunctionCall) otto.Value {
 	controllerName, _ := call.Argument(0).ToString()
-	functionBody, _ := call.Argument(1).ToString()
+	argumentsStr, _ := call.Argument(1).ToString()
 
-	ctrl := Component{Name: controllerName, Type: "controller", FunctionBody: functionBody}
+	var functionBody string
+	funcSplit := strings.SplitN(argumentsStr, "function(", 2)
+
+	if 2 <= len(funcSplit) {
+		functionBody = fmt.Sprintf("function(%s", funcSplit[1])
+	}
+	var dependencies []string
+	//Just In Case I need to get arguments
+	argList, _ := call.Argument(1).Export()
+	argListCount := len(argList.([]interface{}))
+	for k, v := range argList.([]interface{}) {
+		if k == argListCount-1 {
+			continue
+		}
+		dependencies = append(dependencies, v.(string))
+	}
+	//fmt.Println("Length Of List", len(argList.([]interface{})))
+	ctrl := Component{Name: controllerName, Type: "controller", FunctionBody: functionBody, Dependencies: dependencies}
 	ctrl.FindTemplateString(angular.TemplateDir)
 	ctrl.ParseScopeProperties()
 	ctrl.ParseScopeValues()

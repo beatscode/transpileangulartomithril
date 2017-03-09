@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -10,7 +9,7 @@ import (
 	"com.drleonardo/transpileangulartomithril/angular"
 )
 
-func TestScopeObjectBuild(t *testing.T) {
+func TestScopeObject(t *testing.T) {
 
 	var vm = otto.New()
 	angularTemplateDir := "."
@@ -20,14 +19,14 @@ func TestScopeObjectBuild(t *testing.T) {
 
 	componentString := `
     angular.module('myApp',['helloModule','hello2Module']);
-    angular.module('myApp').controller('testController',function($scope,my_Otherservice){
+    angular.module('myApp').controller('testController',[ '$scope','my_Otherservice', function($scope,my_Otherservice){
         $scope.myvar = "123";
         $scope.list = [1,2,3,4,5];
         $scope.getListItems = function(){
             console.log($items)
             $scope.list = []
         }
-    });
+    }]);
     `
 	//Set proper mock of angular object
 	angularObj, _ := vm.Object(`angular = {}`)
@@ -48,7 +47,7 @@ func TestScopeObjectBuild(t *testing.T) {
 	}
 
 	if len(aModule.ScopeProperties) != 2 {
-		t.Error("Failed to parse proper scope list")
+		t.Error("Failed to parse proper scope list", len(aModule.ScopeProperties))
 	}
 }
 
@@ -62,13 +61,14 @@ func TestScopeFunctionBuild(t *testing.T) {
 
 	componentString := `
         angular.module('myApp',['helloModule','hello2Module']);
-        angular.module('myApp').controller('testController',function($scope){
-            $scope.myvar = "123";
-            $scope.list = [1,2,3,4,5];
-            $scope.getListItems = function(){
-                console.log($items)
-            }
-        });
+    angular.module('myApp').controller('testController',[ '$scope','my_Otherservice', function($scope,my_Otherservice){
+        $scope.myvar = "123";
+        $scope.list = [1,2,3,4,5];
+        $scope.getListItems = function(){
+            console.log($items)
+            $scope.list = []
+        }
+    }]);
         `
 	//Set proper mock of angular object
 	angularObj, _ := vm.Object(`angular = {}`)
@@ -104,14 +104,15 @@ func TestScopeFunctionBody(t *testing.T) {
 	app.TemplateDir = angularTemplateDir
 
 	componentString := `
-        angular.module('myApp',['helloModule','hello2Module']);
-        angular.module('myApp').controller('testController',function($scope){
-            $scope.myvar = "123";
-            $scope.list = [1,2,3,4,5];
-            $scope.getListItems = function(){
-                console.log($items)
-            }
-        });
+         angular.module('myApp',['helloModule','hello2Module']);
+    angular.module('myApp').controller('testController',[ '$scope','my_Otherservice', function($scope,my_Otherservice){
+        $scope.myvar = "123";
+        $scope.list = [1,2,3,4,5];
+        $scope.getListItems = function(){
+            console.log($items)
+            $scope.list = []
+        }
+    }]);
         `
 	//Set proper mock of angular object
 	angularObj, _ := vm.Object(`angular = {}`)
@@ -131,7 +132,6 @@ func TestScopeFunctionBody(t *testing.T) {
 		}
 	}
 	functionBody := aModule.FunctionBodies["getListItems"]
-	fmt.Println(functionBody, aModule.FunctionBody)
 	if strings.Contains(functionBody, "console.log($items)") == false {
 		t.Error("Function Body is invalid", functionBody)
 	}
@@ -146,7 +146,7 @@ func TestGetScopeValues(t *testing.T) {
 
 	componentString := `
         angular.module('myApp',['helloModule','hello2Module']);
-        angular.module('myApp').controller('testController',function($scope){
+        angular.module('myApp').controller('testController',[ '$scope', function($scope){
             $scope.myvar = "123";
             $scope.list = [1,2,3,4,5];
 			$scope.number = 12341;
@@ -158,7 +158,7 @@ func TestGetScopeValues(t *testing.T) {
 			$scope.$on('SomeEvent/eventThatICareAbout',function(){
 				console.log('I do something here');
 			})
-        });
+        }]);
         `
 	//Set proper mock of angular object
 	angularObj, _ := vm.Object(`angular = {}`)
