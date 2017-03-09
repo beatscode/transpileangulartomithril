@@ -10,30 +10,51 @@ import (
 
 	"com.drleonardo/transpileangulartomithril/angular"
 
+	"github.com/BurntSushi/toml"
 	"github.com/robertkrimen/otto"
 )
 
-//Transpiler will hopfully convert important parts to mithril or some other framework
-type Transpiler struct {
-	Dependencies []string
-}
-
-var angularTemplateDirPtr *string
-var angularScriptsDirPtr *string
-var tranpiler Transpiler
 var app angular.App
 var vm = otto.New()
+var configfile string
 
 /*
 angular.module('onBoardExpressApp').controller('onBoardSearchController', function ($scope, $rootScope, $window, onboard_express_service) {...
 */
 func main() {
-	angularTemplateDirPtr = flag.String("angularTemplateDir", ".", "Directory to search for controller html")
-	angularScriptsDirPtr = flag.String("angularTemplateDir", "./test/scripts", "Directory to search for angular scripts")
-	Start(*angularScriptsDirPtr, *angularTemplateDirPtr)
+	flag.StringVar(&configfile, "config", "app.conf", "Application Config")
+
+	//Parse Arguments
+	flag.Parse()
+
+	masterconfig := ReadConfig(configfile)
+
+	fileBytes, err := ioutil.ReadFile(masterconfig.ExternalMocksFilepath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	Start(masterconfig.ScriptsDir, masterconfig.TemplateDir, string(fileBytes))
 }
 
-func Start(angularScriptsDir string, angularTemplateDir string) {
+type Config struct {
+	TemplateDir           string
+	ScriptsDir            string
+	ExternalMocksFilepath string
+}
+
+func ReadConfig(configfile string) Config {
+	_, err := os.Stat(configfile)
+	if err != nil {
+		log.Fatal("Config file is missing: ", configfile)
+	}
+
+	var config Config
+	if _, err := toml.DecodeFile(configfile, &config); err != nil {
+		log.Fatal(err)
+	}
+	return config
+}
+func Start(angularScriptsDir string, angularTemplateDir string, externalMocks string) angular.App {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Fatalln("Start Error:", r)
@@ -41,35 +62,54 @@ func Start(angularScriptsDir string, angularTemplateDir string) {
 	}()
 	app.VM = vm
 	app.TemplateDir = angularTemplateDir
-
-	file, err := os.Open(angularScriptsDir)
-	checkErr(err)
-
-	files, err := file.Readdir(-1)
-	checkErr(err)
-
-	for _, file := range files {
-
-		filepath := fmt.Sprintf("%s/%s", angularScriptsDir, file.Name())
-		if strings.Contains(file.Name(), ".js") {
-			javascript, err := ioutil.ReadFile(filepath)
-			checkErr(err)
-
-			//Set proper mock of angular object
-			angularObj, _ := vm.Object(`angular = {}`)
-			angularObj.Set("module", app.Module)
-			angularObj.Set("controller", app.Controller)
-			angularObj.Set("service", app.Service)
-
-			//Run the file/string to build meta data for conversion
-			if _, err := vm.Run(javascript); err != nil {
-				if strings.Contains(err.Error(), "'$scope' is not defined") {
-					log.Fatalln("$scope needs to be defined:", string(javascript))
-				}
-				panic(err)
-			}
-		}
+	app.ExternalMocks = externalMocks
+	var err error
+	var files []os.FileInfo
+	fstat, err := os.Stat(angularScriptsDir)
+	if err != nil {
+		fmt.Println(angularScriptsDir)
+		panic(err)
 	}
+	if fstat.IsDir() {
+		file, err := os.Open(angularScriptsDir)
+		checkErr(err)
+
+		files, err = file.Readdir(-1)
+		checkErr(err)
+		for _, file := range files {
+
+			filepath := fmt.Sprintf("%s/%s", angularScriptsDir, file.Name())
+			if strings.Contains(file.Name(), ".js") == false {
+				continue
+			}
+			javascriptFileContents, err := ioutil.ReadFile(filepath)
+			checkErr(err)
+			parse(string(javascriptFileContents))
+		}
+	} else {
+		files = append(files, fstat)
+		fileBytes, err := ioutil.ReadFile(angularScriptsDir)
+		checkErr(err)
+		parse(string(fileBytes))
+	}
+
+	return app
+}
+func parse(javascriptFileContents string) {
+	//Set proper mock of angular object
+	angularObj, _ := vm.Object(`angular = {}`)
+	angularObj.Set("module", app.Module)
+	angularObj.Set("controller", app.Controller)
+	angularObj.Set("service", app.Service)
+
+	//Run the file/string to build meta data for conversion
+	if _, err := vm.Run(javascriptFileContents); err != nil {
+		if strings.Contains(err.Error(), "'$scope' is not defined") {
+			log.Fatalln("$scope needs to be defined:", string(javascriptFileContents))
+		}
+		panic(err)
+	}
+
 }
 
 func checkErr(err error) {

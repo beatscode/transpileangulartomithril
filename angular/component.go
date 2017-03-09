@@ -3,6 +3,8 @@ package angular
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -23,10 +25,11 @@ type Component struct {
 	ScopeProperties []string
 	ScopeObject     interface{}
 	VM              *otto.Otto
+	Module          *App
 }
 
 var WatchersMock = `var watchers={}`
-var JqueryMock = `var $ = {}`
+var JqueryMock = `var $ = function(){}`
 var ScopeObjectMock = `var scopeObj = {
 	'$on':function(eventName,func){
 		watchers[eventName] = func.toString();
@@ -57,25 +60,47 @@ func (aComponent *Component) ParseScopeProperties() {
 
 	aComponent.ScopeProperties = scopeProperties
 }
-func addMocks(vm *otto.Otto) {
-	vm.Object(ScopeObjectMock)
-	vm.Object(WatchersMock)
-	vm.Object(JqueryMock)
+func (aComponent *Component) addMocks() {
+	aComponent.VM.Object(ScopeObjectMock)
+	aComponent.VM.Object(WatchersMock)
+	aComponent.VM.Object(JqueryMock)
+
+	var err error
+	//Mock dependencies
+	for _, dep := range aComponent.Dependencies {
+		aComponent.VM.Set(dep, func(call otto.FunctionCall) otto.Value {
+			return otto.Value{}
+		})
+		_, err = aComponent.VM.Run(fmt.Sprintf("new %s()", dep))
+		if err != nil {
+			panic(err)
+		}
+	}
+
 }
 
 //ParseScopeValues attempts to export $sccope Values/Properties
 func (aComponent *Component) ParseScopeValues() {
 	var functionVM *otto.Otto
-	functionVM = otto.New()
-	addMocks(functionVM)
+
+	functionVM = aComponent.VM //otto.New()
+	aComponent.addMocks()
+
 	//Set Function Equal to var
 	functionAssignment := fmt.Sprintf(`var func = %s`, aComponent.FunctionBody)
+
 	functionVM.Set("controllerFunction", functionAssignment)
-	if _, err := functionVM.Run(`
+	functionEvalCode := fmt.Sprintf(`
+		//External Mocks
+		%s 
 	    //Set and Run Function
 	    eval(controllerFunction)
-	    func(scopeObj)
-	`); err != nil {
+		$scope = scopeObj
+	    func(%s)
+	`, aComponent.Module.ExternalMocks, strings.Join(aComponent.Dependencies, ","))
+	if _, err := functionVM.Run(functionEvalCode); err != nil {
+		fmt.Println(functionEvalCode)
+		//log.Fatal(err.Error())
 		panic(err)
 	}
 	var scopeObjectInterface interface{}
@@ -139,25 +164,40 @@ func (aComponent *Component) ParseFunctionBodies() {
 		return
 	}
 	aComponent.FunctionBodies = make(map[string]string)
-	var functionVM *otto.Otto
-
+	//functionVM = aComponent.VM
+	aComponent.addMocks()
 	for _, function := range aComponent.Functions {
-		functionVM = otto.New()
-		addMocks(functionVM)
+		//This function is usually self invoking
+		if function == "init" {
+			continue
+		}
+		//	functionVM = otto.New()
 		//Set Function Equal to var
 		functionAssignment := fmt.Sprintf(`var func = %s`, aComponent.FunctionBody)
-		functionVM.Set("controllerFunction", functionAssignment)
-		if _, err := functionVM.Run(`
-        //Set and Run Function
-        eval(controllerFunction)
-        func(scopeObj)
-    `); err != nil {
-			panic(err)
+		aComponent.VM.Set("controllerFunction", functionAssignment)
+		functionEvalCode := fmt.Sprintf(`
+		//External Mocks
+		%s 
+	    //Set and Run Function
+	    eval(controllerFunction)
+		$scope = scopeObj
+	    func(%s)
+	`, aComponent.Module.ExternalMocks, strings.Join(aComponent.Dependencies, ","))
+		if _, err := aComponent.VM.Run(functionEvalCode); err != nil {
+			//It is hard to get the source of Self invoking functions
+			//
+			log.Println(functionEvalCode, err.Error())
+			continue
+			//panic(err)
 		}
 		var functionBody string
 		functionToString := fmt.Sprintf(`scopeObj.%s.toString()`, function)
-		if functionString, err := functionVM.Run(functionToString); err != nil {
-			panic(err)
+		if functionString, err := aComponent.VM.Run(functionToString); err != nil {
+			//panic(err)
+			//It is hard to get the source of Self invoking functions
+			//
+			log.Println(functionToString, err.Error())
+			continue
 		} else {
 			functionBody = functionString.String()
 		}
@@ -166,17 +206,29 @@ func (aComponent *Component) ParseFunctionBodies() {
 }
 
 //FindTemplateString searches angular template directory for controller html
-func (aComponent *Component) FindTemplateString(dir string) {
-	files, err := ioutil.ReadDir(dir)
-	checkErr(err)
-	for _, f := range files {
-		if filepath.Ext(f.Name()) != ".html" {
-			continue
-		}
+func (aComponent *Component) FindTemplateString() {
+	dir := aComponent.Module.TemplateDir
+	fstat, err := os.Stat(dir)
+	if err != nil {
+		fmt.Println(dir)
+		panic(err)
+	}
+	if fstat.IsDir() {
+		//check if dir is a file or directory
+		files, err := ioutil.ReadDir(dir)
+		checkErr(err)
+		for _, f := range files {
+			if filepath.Ext(f.Name()) != ".html" {
+				continue
+			}
 
-		rawBytes, _ := ioutil.ReadFile(fmt.Sprintf("%s/%s", dir, f.Name()))
-		if strings.Contains(string(rawBytes), aComponent.Name) {
-			aComponent.TemplateStr = string(rawBytes)
+			rawBytes, _ := ioutil.ReadFile(fmt.Sprintf("%s/%s", dir, f.Name()))
+			if strings.Contains(string(rawBytes), aComponent.Name) {
+				aComponent.TemplateStr = string(rawBytes)
+			}
 		}
+	} else {
+		rawBytes, _ := ioutil.ReadFile(dir)
+		aComponent.TemplateStr = string(rawBytes)
 	}
 }

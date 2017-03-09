@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"io/ioutil"
+	"log"
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/robertkrimen/otto"
 
@@ -136,7 +141,70 @@ func TestScopeFunctionBody(t *testing.T) {
 		t.Error("Function Body is invalid", functionBody)
 	}
 }
+func TestDoctorParse(t *testing.T) {
+	// var vm = otto.New()
+	// angularTemplateDir := "."
+	// var app angular.App
+	// app.VM = vm
+	// app.TemplateDir = angularTemplateDir
+	//componentBytes, _ := ioutil.ReadFile(`test/doctor_c.js`)
+	//componentString := strings.TrimSpace(string(componentBytes))
+	//Set proper mock of angular object
+	// angularObj, _ := vm.Object(`angular = {}`)
+	// angularObj.Set("module", app.Module)
+	// angularObj.Set("controller", app.Controller)
+	// app.ExternalMocks = ``
+	var configfile Config
+	configfile.TemplateDir = "./test/views/doctor.html"
+	configfile.ExternalMocksFilepath = "./externalmocks.js"
+	configfile.ScriptsDir = "./test/doctor_c.js"
+	fileBytes, err := ioutil.ReadFile(configfile.ExternalMocksFilepath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	app := Start(configfile.ScriptsDir, configfile.TemplateDir, string(fileBytes))
+	//Run the file/string to build meta data for transpiling
+	// if _, err := vm.Run(componentString); err != nil {
+	// 	panic(err)
+	// }
 
+	var aModule angular.Component
+	for _, module := range app.Components {
+		if module.Type == "controller" && module.Name == "doctorscontroller" {
+			aModule = module
+		}
+	}
+
+	if aModule.Name != "doctorscontroller" {
+		t.Error("Invalid Module Parsing")
+	}
+
+	buf := new(bytes.Buffer)
+	tmpl := template.New("New Component")
+	tmpl, _ = tmpl.Parse(`
+	var {{.Name}}Model = {
+		{{range $key, $element := .FunctionBodies}}
+			'{{$key}}' : {{$element}},
+		{{end}}
+	};	
+	var {{.Name}}Component = {
+		oncreate : function(){
+
+		},
+
+		view : function(){
+			return (
+				{{.TemplateStr}}	
+			)
+		}
+	}`)
+	tmpl.Execute(buf, aModule)
+	fmt.Println(buf.String())
+	// if buf.String() != "var doctorscontrollerComponent" {
+	// 	t.Error("Error loading doctor controller component")
+	// }
+
+}
 func TestGetScopeValues(t *testing.T) {
 	var vm = otto.New()
 	angularTemplateDir := "."
@@ -160,6 +228,7 @@ func TestGetScopeValues(t *testing.T) {
 			})
         }]);
         `
+
 	//Set proper mock of angular object
 	angularObj, _ := vm.Object(`angular = {}`)
 	angularObj.Set("module", app.Module)
@@ -195,7 +264,7 @@ func TestDirectoryScanning(t *testing.T) {
 	angularTemplateDir := "."
 	angularScriptsDir := "./test"
 
-	Start(angularScriptsDir, angularTemplateDir)
+	Start(angularScriptsDir, angularTemplateDir, "")
 	noOfComponents := len(app.Components)
 	if noOfComponents != 4 {
 		t.Error("Incorrent number of components", noOfComponents)

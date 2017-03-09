@@ -1,4 +1,4 @@
-angular.module('myApp').controller('RandomController',function($scope){
+angular.module('myApp').controller('RandomController',['$scope',function($scope){
 
     $scope.myvar1 = 'Hello';
     $scope.myvar2 = 'World';
@@ -7,4 +7,4 @@ angular.module('myApp').controller('RandomController',function($scope){
         $scope.myvar1 = $scope.myvar1 + " " + $scope.myvar1;
     }
 
-});
+}]);

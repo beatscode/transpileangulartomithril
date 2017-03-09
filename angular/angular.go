@@ -2,10 +2,13 @@ package angular
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/robertkrimen/otto/ast"
 	"github.com/robertkrimen/otto/parser"
+
+	"reflect"
 
 	"github.com/robertkrimen/otto"
 	"github.com/wolfgarnet/walker"
@@ -13,10 +16,11 @@ import (
 
 //App is made up of multiple angular.modules
 type App struct {
-	Modules     []AngularModule
-	Components  []Component
-	VM          *otto.Otto
-	TemplateDir string
+	Modules       []AngularModule
+	Components    []Component
+	VM            *otto.Otto
+	TemplateDir   string
+	ExternalMocks string
 }
 
 //AngularModule has dependencies and are tied by the same ng-app directive
@@ -112,22 +116,33 @@ func (angular *App) Controller(call otto.FunctionCall) otto.Value {
 	var functionBody string
 	funcSplit := strings.SplitN(argumentsStr, "function(", 2)
 
-	if 2 <= len(funcSplit) {
+	if len(funcSplit) == 1 {
+		funcSplit = strings.SplitN(argumentsStr, "function (", 2)
+	}
+	if len(funcSplit) >= 2 {
 		functionBody = fmt.Sprintf("function(%s", funcSplit[1])
 	}
 	var dependencies []string
 	//Just In Case I need to get arguments
 	argList, _ := call.Argument(1).Export()
-	argListCount := len(argList.([]interface{}))
-	for k, v := range argList.([]interface{}) {
-		if k == argListCount-1 {
-			continue
+	switch reflect.TypeOf(argList).Kind() {
+	case reflect.Slice:
+		argListCount := len(argList.([]interface{}))
+		for k, v := range argList.([]interface{}) {
+			if k == argListCount-1 {
+				continue
+			}
+			dependencies = append(dependencies, v.(string))
 		}
-		dependencies = append(dependencies, v.(string))
+
+		break
+	default:
+		log.Fatal(controllerName + " is not properly formed")
 	}
+
 	//fmt.Println("Length Of List", len(argList.([]interface{})))
-	ctrl := Component{Name: controllerName, Type: "controller", FunctionBody: functionBody, Dependencies: dependencies}
-	ctrl.FindTemplateString(angular.TemplateDir)
+	ctrl := Component{Name: controllerName, Type: "controller", FunctionBody: functionBody, Dependencies: dependencies, Module: angular, VM: call.Otto}
+	ctrl.FindTemplateString()
 	ctrl.ParseScopeProperties()
 	ctrl.ParseScopeValues()
 	ctrl.ParseScopeFunctions()
