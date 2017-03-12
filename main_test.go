@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"reflect"
 	"strings"
 	"testing"
 	"text/template"
@@ -181,8 +182,43 @@ func TestDoctorParse(t *testing.T) {
 
 	buf := new(bytes.Buffer)
 	tmpl := template.New("New Component")
+	tmpl = tmpl.Funcs(template.FuncMap{"prep": func(args ...interface{}) string {
+		fmt.Println(args[0], reflect.TypeOf(args[0]).Kind())
+		var r string
+		switch reflect.TypeOf(args[0]).Kind() {
+		case reflect.String:
+			if args[0].(string) == "undefined" {
+				r = "null"
+			} else if args[0].(string) == "true" || args[0].(string) == "false" {
+				r = args[0].(string)
+			} else if r == "" {
+				r = "null"
+			} else {
+				r = fmt.Sprintf(`'%s'`, args[0])
+			}
+			break
+		case reflect.Bool:
+			if args[0].(bool) == true {
+				r = "true"
+			} else {
+				r = "false"
+			}
+			break
+		}
+
+		return r
+	}})
 	tmpl, _ = tmpl.Parse(`
+	<html>
+	<head>
+    <script src="//unpkg.com/mithril/mithril.js"></script>
+	</head>
+	<body>
+	<script>
 	var {{.Name}}Model = {
+		{{range $key,$el := .ScopeObject}}
+			'{{$key}}':{{$el | prep}},
+		{{end}}
 		{{range $key, $element := .FunctionBodies}}
 			'{{$key}}' : {{$element}},
 		{{end}}
@@ -197,9 +233,17 @@ func TestDoctorParse(t *testing.T) {
 				{{.TemplateStr}}	
 			)
 		}
-	}`)
+	};
+
+	m.mount(document.body, <{{.Name}}Component />)
+	</script>
+	</body>
+	</html>
+	`)
 	tmpl.Execute(buf, aModule)
 	fmt.Println(buf.String())
+	_ = ioutil.WriteFile(fmt.Sprintf("%stest.html", aModule.Name), buf.Bytes(), 0777)
+
 	// if buf.String() != "var doctorscontrollerComponent" {
 	// 	t.Error("Error loading doctor controller component")
 	// }
