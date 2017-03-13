@@ -1,15 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"reflect"
+	"math/rand"
+	"regexp"
 	"strings"
 	"testing"
-	"text/template"
+	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/robertkrimen/otto"
 
 	"com.drleonardo/transpileangulartomithril/angular"
@@ -143,31 +144,15 @@ func TestScopeFunctionBody(t *testing.T) {
 	}
 }
 func TestDoctorParse(t *testing.T) {
-	// var vm = otto.New()
-	// angularTemplateDir := "."
-	// var app angular.App
-	// app.VM = vm
-	// app.TemplateDir = angularTemplateDir
-	//componentBytes, _ := ioutil.ReadFile(`test/doctor_c.js`)
-	//componentString := strings.TrimSpace(string(componentBytes))
-	//Set proper mock of angular object
-	// angularObj, _ := vm.Object(`angular = {}`)
-	// angularObj.Set("module", app.Module)
-	// angularObj.Set("controller", app.Controller)
-	// app.ExternalMocks = ``
 	var configfile Config
 	configfile.TemplateDir = "./test/views/doctor.html"
 	configfile.ExternalMocksFilepath = "./externalmocks.js"
-	configfile.ScriptsDir = "./test/doctor_c.js"
+	configfile.ScriptsDir = "./test/doctorcontroller.js"
 	fileBytes, err := ioutil.ReadFile(configfile.ExternalMocksFilepath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	app := Start(configfile.ScriptsDir, configfile.TemplateDir, string(fileBytes))
-	//Run the file/string to build meta data for transpiling
-	// if _, err := vm.Run(componentString); err != nil {
-	// 	panic(err)
-	// }
 
 	var aModule angular.Component
 	for _, module := range app.Components {
@@ -180,75 +165,158 @@ func TestDoctorParse(t *testing.T) {
 		t.Error("Invalid Module Parsing")
 	}
 
-	buf := new(bytes.Buffer)
-	tmpl := template.New("New Component")
-	tmpl = tmpl.Funcs(template.FuncMap{"prep": func(args ...interface{}) string {
-		fmt.Println(args[0], reflect.TypeOf(args[0]).Kind())
-		var r string
-		switch reflect.TypeOf(args[0]).Kind() {
-		case reflect.String:
-			if args[0].(string) == "undefined" {
-				r = "null"
-			} else if args[0].(string) == "true" || args[0].(string) == "false" {
-				r = args[0].(string)
-			} else if r == "" {
-				r = "null"
-			} else {
-				r = fmt.Sprintf(`'%s'`, args[0])
-			}
-			break
-		case reflect.Bool:
-			if args[0].(bool) == true {
-				r = "true"
-			} else {
-				r = "false"
-			}
-			break
-		}
+	buf := aModule.ExportController()
 
-		return r
-	}})
-	tmpl, _ = tmpl.Parse(`
+	htmlStr := fmt.Sprintf(`
 	<html>
 	<head>
     <script src="//unpkg.com/mithril/mithril.js"></script>
 	</head>
 	<body>
-	<script>
-	var {{.Name}}Model = {
-		{{range $key,$el := .ScopeObject}}
-			'{{$key}}':{{$el | prep}},
-		{{end}}
-		{{range $key, $element := .FunctionBodies}}
-			'{{$key}}' : {{$element}},
-		{{end}}
-	};	
-	var {{.Name}}Component = {
-		oncreate : function(){
-
-		},
-
-		view : function(){
-			return (
-				{{.TemplateStr}}	
-			)
-		}
-	};
-
-	m.mount(document.body, <{{.Name}}Component />)
-	</script>
+		%s
 	</body>
 	</html>
-	`)
-	tmpl.Execute(buf, aModule)
-	fmt.Println(buf.String())
-	_ = ioutil.WriteFile(fmt.Sprintf("%stest.html", aModule.Name), buf.Bytes(), 0777)
+	`, buf.Bytes())
+	_ = ioutil.WriteFile(fmt.Sprintf("%stest.html", aModule.Name), []byte(htmlStr), 0777)
 
 	// if buf.String() != "var doctorscontrollerComponent" {
 	// 	t.Error("Error loading doctor controller component")
 	// }
-
 }
+
+func TestConvertAngularHtmlStringToSupportJSX(t *testing.T) {
+	var angularStr = `<div class="pull-right">
+        <button class="btn btn-primary save-button" type="button" data-ng-click="saveDoctors($event);">Save</button>
+        <a data-ng-click="exitForm(currentOption);" class="close-partial">Close</a>
+      </div>
+	  <button ng-click="saveFullName()"> Save Full Name </button>
+      <div class="pull-right">
+        <div class="alert alert-error" ng-show="hasError">{{errorMsg}}</div>
+        <div class="alert alert-success" ng-show="status" >{{status}}</div>
+      </div>
+
+		<select class="span3" ng-model="sDoctor" ng-change="findLocations();" 
+		ng-options="s.firstname + ' ' + s.lastname for s in doctors" >
+		<option value="">Choose Doctor</option>
+		</select>
+	  `
+
+	// <button class="btn-rqust-app" onclick={ApptModel.save}>Request Appointment</button>
+	// <input type="text" name="Email" value={ApptModel.current.Email}/>
+
+	htmlContent := fmt.Sprintf(`<html><head><body id="view">%s</body></html>`, angularStr)
+	reader := strings.NewReader(htmlContent)
+
+	doc, _ := goquery.NewDocumentFromReader(reader)
+	componentName := "TestComponentModel"
+	var convertedClickFunctions []string
+	// ng-click="saveForm()" -> onclick={ComponentModel.saveForm}
+	doc.Find("[data-ng-click],[ng-click]").Each(func(i int, s *goquery.Selection) {
+
+		convertHtml := func(funcName string, s *goquery.Selection) {
+			onclickSyntax := fmt.Sprintf("%s.%s", componentName, funcName)
+			convertedClickFunctions = append(convertedClickFunctions, onclickSyntax)
+			s.SetAttr("onclick", onclickSyntax)
+			s.RemoveAttr("data-ng-click")
+			s.RemoveAttr("ng-click")
+
+			//s.SetHtml()
+		}
+
+		if funcName, ok := s.Attr("data-ng-click"); ok {
+			convertHtml(funcName, s)
+		}
+
+		if funcName, ok := s.Attr("ng-click"); ok {
+			convertHtml(funcName, s)
+		}
+	})
+
+	/*
+		<select class="span3" ng-model="sDoctor" ng-change="findDoctorLocation();getDoctorSpecialties();"
+		ng-options="s.firstname + ' ' + s.lastname for s in doctors" >
+		<option value="">Choose Doctor</option>
+		</select>
+		----------------------------------
+
+		<select class="slct-loc" style="margin-right:3px" name="Location" onchange={binds}>
+				<option>Select Location</option>
+				{locations.map((location) => {
+					return <option key={location.id}>{location.practice_name}</option>
+				})}
+				</select>
+	*/
+	var replaceHTMLMap = make(map[string]string)
+	doc.Find("[data-ng-change],[ng-change]").Each(func(i int, s *goquery.Selection) {
+
+		//regex
+		//\w+\sin\s+\w+ ng-options="x in array"
+		expression := `\w+\s+in\s+(?P<variable>\w+)`
+		reg := regexp.MustCompile(expression)
+
+		if ngOptions, ok := s.Attr("ng-options"); ok {
+			//Create Map Function
+			matches := reg.FindAllStringSubmatch(ngOptions, -1)
+			if len(matches) == 0 {
+				return
+			}
+			arrayName := matches[0][1]
+			replaceInnerHTML := fmt.Sprintf(`
+				{%s.map((obj) => {
+					return <option key={%s.id}>{%s}</option>
+				})}
+			`, arrayName, arrayName, arrayName)
+
+			s.RemoveAttr("ng-options")
+			tmpRan := RandomString(8)
+			replaceHTMLMap[tmpRan] = replaceInnerHTML
+			s.SetAttr("data-parsekey", tmpRan)
+		}
+
+		if ngModel, ok := s.Attr("ng-model"); ok {
+			s.SetAttr("name", ngModel)
+			s.RemoveAttr("ng-model")
+		}
+
+		if ngChange, ok := s.Attr("ng-change"); ok {
+			s.SetAttr("onchange", "{"+ngChange+"}")
+			s.RemoveAttr("ng-change")
+		} else {
+			s.SetAttr("onchange", "{binds}")
+		}
+
+	})
+	htmlStr, _ := doc.Find("#view").Html()
+	doc, _ = goquery.NewDocumentFromReader(reader)
+	for _, fn := range convertedClickFunctions {
+		//replace old with new
+		//Get what is between parenthesis
+		fnWithoutParenthesis := strings.Split(fn, "(")
+		htmlStr = strings.Replace(htmlStr, fmt.Sprintf(`"%s"`, fn), fmt.Sprintf(`{%s}`, fnWithoutParenthesis[0]), 1)
+	}
+
+	for key, selc := range replaceHTMLMap {
+		doc.Find(fmt.Sprintf(`[data-parsekey=%s]`, key)).Each(func(i int, s *goquery.Selection) {
+			fmt.Println(selc)
+			s.SetText(selc)
+		})
+	}
+
+	//Replace {{ and }} with { }
+	htmlStr = strings.Replace(htmlStr, "{{", "{", -1)
+	htmlStr = strings.Replace(htmlStr, "}}", "}", -1)
+	fmt.Println(htmlStr)
+}
+func RandomString(strlen int) string {
+	rand.Seed(time.Now().UTC().UnixNano())
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	result := make([]byte, strlen)
+	for i := 0; i < strlen; i++ {
+		result[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(result)
+}
+
 func TestGetScopeValues(t *testing.T) {
 	var vm = otto.New()
 	angularTemplateDir := "."

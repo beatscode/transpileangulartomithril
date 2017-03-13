@@ -1,6 +1,7 @@
 package angular
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"text/template"
 
 	"github.com/robertkrimen/otto"
 )
@@ -231,4 +233,67 @@ func (aComponent *Component) FindTemplateString() {
 		rawBytes, _ := ioutil.ReadFile(dir)
 		aComponent.TemplateStr = string(rawBytes)
 	}
+}
+
+//ExportController exports the controller as a buffer with objects
+//and  functions
+func (aComponent *Component) ExportController() *bytes.Buffer {
+
+	buf := new(bytes.Buffer)
+	if aComponent.TemplateStr == "" {
+		return buf
+	}
+	tmpl := template.New("New Component")
+	tmpl = tmpl.Funcs(template.FuncMap{"parseVal": func(args ...interface{}) string {
+		fmt.Println(args[0], reflect.TypeOf(args[0]).Kind())
+		var r string
+		switch reflect.TypeOf(args[0]).Kind() {
+		case reflect.String:
+			if args[0].(string) == "undefined" {
+				r = "null"
+			} else if args[0].(string) == "true" || args[0].(string) == "false" || args[0].(string) == "{}" || args[0].(string) == "[]" {
+				r = args[0].(string)
+			} else {
+				r = fmt.Sprintf(`'%s'`, args[0])
+			}
+			break
+		case reflect.Bool:
+			if args[0].(bool) == true {
+				r = "true"
+			} else {
+				r = "false"
+			}
+			break
+		}
+
+		return r
+	}})
+
+	tmpl, _ = tmpl.Parse(`	
+	<script>
+	var {{.Name}}Model = {
+		{{range $key,$el := .ScopeObject}}
+			'{{$key}}':{{$el | parseVal}},
+		{{end}}
+		{{range $key, $element := .FunctionBodies}}
+			'{{$key}}' : {{$element}},
+		{{end}}
+	};	
+	var {{.Name}}Component = {
+		oncreate : function(){
+
+		},
+
+		view : function(){
+			return (
+				{{.TemplateStr}}	
+			)
+		}
+	};
+	m.mount(document.body, <{{.Name}}Component />)
+	</script>
+	`)
+	tmpl.Execute(buf, aComponent)
+	fmt.Println(buf.String())
+	return buf
 }
