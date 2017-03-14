@@ -63,7 +63,7 @@ func (app *App) IntrospectScope() {
 
 	// Parse some JavaScript, yielding a *ast.Program and/or an ErrorList
 	program, _ := parser.ParseFile(nil, filename, src, 0)
-	fmt.Println(program.Body)
+	//fmt.Println(program.Body)
 	for k, v := range program.Body {
 		fmt.Println(k, v)
 	}
@@ -139,14 +139,17 @@ func (angular *App) Controller(call otto.FunctionCall) otto.Value {
 	default:
 		log.Fatal(controllerName + " is not properly formed")
 	}
-
+	modelname := strings.Title(strings.Replace(strings.ToLower(controllerName), "controller", "", -1)) + "Model"
 	//fmt.Println("Length Of List", len(argList.([]interface{})))
-	ctrl := Component{Name: controllerName, Type: "controller", FunctionBody: functionBody, Dependencies: dependencies, Module: angular, VM: call.Otto}
+	ctrl := Component{Name: strings.Title(controllerName), Type: "controller",
+		ModelName: modelname, FunctionBody: functionBody, Dependencies: dependencies, Module: angular, VM: call.Otto}
 	ctrl.FindTemplateString()
 	ctrl.ParseScopeProperties()
 	ctrl.ParseScopeValues()
 	ctrl.ParseScopeFunctions()
 	ctrl.ParseFunctionBodies()
+	ctrl.RemoveScopeFunctionsFromScopeObjectInterface()
+
 	angular.Components = append(angular.Components, ctrl)
 
 	return otto.Value{}

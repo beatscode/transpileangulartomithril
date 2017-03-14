@@ -3,15 +3,20 @@ package angular
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/robertkrimen/otto"
 )
 
@@ -19,6 +24,7 @@ import (
 type Component struct {
 	Type            string
 	Name            string
+	ModelName       string
 	FunctionBody    string
 	Dependencies    []string
 	TemplateStr     string
@@ -101,7 +107,7 @@ func (aComponent *Component) ParseScopeValues() {
 	    func(%s)
 	`, aComponent.Module.ExternalMocks, strings.Join(aComponent.Dependencies, ","))
 	if _, err := functionVM.Run(functionEvalCode); err != nil {
-		fmt.Println(functionEvalCode)
+		//fmt.Println(functionEvalCode)
 		//log.Fatal(err.Error())
 		panic(err)
 	}
@@ -144,6 +150,29 @@ func (aComponent *Component) ParseScopeValues() {
 		}
 	}
 	aComponent.ScopeObject = scopeObjectInterface
+}
+
+func (aComponent *Component) RemoveScopeFunctionsFromScopeObjectInterface() {
+	for key, _ := range aComponent.ScopeObject.(map[string]interface{}) {
+		if key == "$on" {
+			delete(aComponent.ScopeObject.(map[string]interface{}), key)
+			continue
+		}
+
+		//Check if item is a function
+		//If so then remove it
+		var found = false
+		for k := range aComponent.FunctionBodies {
+			fmt.Println("Function", k)
+			if key == k {
+				found = true
+			}
+		}
+		if found {
+			delete(aComponent.ScopeObject.(map[string]interface{}), key)
+			continue
+		}
+	}
 }
 func (aComponent *Component) ParseScopeFunctions() {
 	//Get Scope Variables that are not functions
@@ -201,7 +230,7 @@ func (aComponent *Component) ParseFunctionBodies() {
 			log.Println(functionToString, err.Error())
 			continue
 		} else {
-			functionBody = functionString.String()
+			functionBody = strings.Replace(functionString.String(), "$scope", aComponent.ModelName, -1)
 		}
 		aComponent.FunctionBodies[function] = functionBody
 	}
@@ -245,7 +274,6 @@ func (aComponent *Component) ExportController() *bytes.Buffer {
 	}
 	tmpl := template.New("New Component")
 	tmpl = tmpl.Funcs(template.FuncMap{"parseVal": func(args ...interface{}) string {
-		fmt.Println(args[0], reflect.TypeOf(args[0]).Kind())
 		var r string
 		switch reflect.TypeOf(args[0]).Kind() {
 		case reflect.String:
@@ -268,15 +296,14 @@ func (aComponent *Component) ExportController() *bytes.Buffer {
 
 		return r
 	}})
-
-	tmpl, _ = tmpl.Parse(`	
-	<script>
-	var {{.Name}}Model = {
+	aComponent.ConvertAngularElements()
+	//TODO: See if we can convert to jsx here
+	tmpl, _ = tmpl.Parse(`var {{.ModelName}} = {
 		{{range $key,$el := .ScopeObject}}
 			'{{$key}}':{{$el | parseVal}},
 		{{end}}
-		{{range $key, $element := .FunctionBodies}}
-			'{{$key}}' : {{$element}},
+		{{range $key, $func := .FunctionBodies}}
+			'{{$key}}': {{$func}},
 		{{end}}
 	};	
 	var {{.Name}}Component = {
@@ -290,10 +317,159 @@ func (aComponent *Component) ExportController() *bytes.Buffer {
 			)
 		}
 	};
-	m.mount(document.body, <{{.Name}}Component />)
-	</script>
+	m.mount(document.body, {{.Name}}Component)
 	`)
 	tmpl.Execute(buf, aComponent)
 	fmt.Println(buf.String())
 	return buf
+}
+
+//ConvertAngularElements converts ng-click,ng-change to jsx freindly markey
+func (aComponent *Component) ConvertAngularElements() {
+	// <button class="btn-rqust-app" onclick={ApptModel.save}>Request Appointment</button>
+	// <input type="text" name="Email" value={ApptModel.current.Email}/>
+
+	htmlContent := fmt.Sprintf(`<html><head><body id="view">%s</body></html>`, aComponent.TemplateStr)
+	reader := strings.NewReader(htmlContent)
+
+	doc, _ := goquery.NewDocumentFromReader(reader)
+	componentName := "TestComponentModel"
+	doc.Find("#view").Each(func(i int, s *goquery.Selection) {
+		if s.Children().Size() > 1 {
+			htmlContent = fmt.Sprintf(`<html><head><body id="view"><div>%s<div></body></html>`, aComponent.TemplateStr)
+			reader = strings.NewReader(htmlContent)
+			doc, _ = goquery.NewDocumentFromReader(reader)
+		}
+	})
+
+	var convertedClickFunctions []string
+	// ng-click="saveForm()" -> onclick={ComponentModel.saveForm}
+	doc.Find("[data-ng-click],[ng-click]").Each(func(i int, s *goquery.Selection) {
+
+		convertHTML := func(funcName string, s *goquery.Selection) {
+			onclickSyntax := fmt.Sprintf("%s.%s", componentName, funcName)
+			convertedClickFunctions = append(convertedClickFunctions, onclickSyntax)
+			s.SetAttr("onclick", onclickSyntax)
+			s.RemoveAttr("data-ng-click")
+			s.RemoveAttr("ng-click")
+		}
+
+		if funcName, ok := s.Attr("data-ng-click"); ok {
+			convertHTML(funcName, s)
+		}
+
+		if funcName, ok := s.Attr("ng-click"); ok {
+			convertHTML(funcName, s)
+		}
+	})
+
+	/*
+		<select class="span3" ng-model="sDoctor" ng-change="findDoctorLocation();getDoctorSpecialties();"
+		ng-options="s.firstname + ' ' + s.lastname for s in doctors" >
+		<option value="">Choose Doctor</option>
+		</select>
+		----------------------------------
+
+		<select class="slct-loc" style="margin-right:3px" name="Location" onchange={binds}>
+				<option>Select Location</option>
+				{locations.map((location) => {
+					return <option key={location.id}>{location.practice_name}</option>
+				})}
+				</select>
+	*/
+	var replaceHTMLMap = make(map[string]string)
+	doc.Find("[data-ng-change],[ng-change]").Each(func(i int, s *goquery.Selection) {
+
+		//regex
+		//\w+\sin\s+\w+ ng-options="x in array"
+		expression := `\w+\s+in\s+(?P<variable>\w+)`
+		reg := regexp.MustCompile(expression)
+
+		if ngOptions, ok := s.Attr("ng-options"); ok {
+			//Create Map Function
+			matches := reg.FindAllStringSubmatch(ngOptions, -1)
+			if len(matches) == 0 {
+				return
+			}
+			arrayName := matches[0][1]
+			replaceInnerHTML := fmt.Sprintf(`
+				<option>Select %s</option>
+				{%s.%s.map((obj) => {
+					return ( <option key={obj.id}>{obj}</option> )
+				})}
+			`, arrayName, aComponent.ModelName, arrayName)
+
+			s.RemoveAttr("ng-options")
+			tmpRan := randomString(8)
+			replaceHTMLMap[tmpRan] = html.UnescapeString(replaceInnerHTML)
+			s.SetAttr("data-parsekey", tmpRan)
+		}
+
+		if ngModel, ok := s.Attr("ng-model"); ok {
+			s.SetAttr("name", ngModel)
+			s.RemoveAttr("ng-model")
+		}
+
+		if ngChange, ok := s.Attr("ng-change"); ok {
+			onclickSyntax := fmt.Sprintf("%s.%s", componentName, ngChange)
+			convertedClickFunctions = append(convertedClickFunctions, onclickSyntax)
+			s.SetAttr("onchange", onclickSyntax)
+			s.RemoveAttr("ng-change")
+		} else {
+			s.SetAttr("onchange", "{binds}")
+		}
+
+	})
+
+	for key, selc := range replaceHTMLMap {
+		selectKey := fmt.Sprintf(`select[data-parsekey='%s']`, key)
+		doc.Find(selectKey).Each(func(i int, s *goquery.Selection) {
+			s.SetHtml(selc)
+			s.RemoveAttr("data-parsekey")
+		})
+	}
+	htmlStr, _ := doc.Find("#view").Html()
+
+	//Replace {{ and }} with {ModelName.scope_property }
+	// {{myvar}} -> {ModelName.myvar}
+	htmlStr = strings.Replace(htmlStr, "{{", fmt.Sprintf("{%s.", aComponent.ModelName), -1)
+	htmlStr = strings.Replace(htmlStr, "}}", "}", -1)
+
+	htmlStr = html.UnescapeString(htmlStr)
+	srcFileName := aComponent.Name + ".html"
+	err := ioutil.WriteFile(srcFileName, []byte(htmlStr), 0777)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	html2jsx, err := exec.LookPath("html2jsx")
+	if err != nil {
+		log.Fatal("installing lessc is in your future")
+	}
+
+	out, reterr := exec.Command(html2jsx, srcFileName).CombinedOutput()
+	fmt.Println(reterr)
+	jsxStr := strings.TrimSpace(string(out))
+	//Conversion adds function {Name}() { to the string
+	splits := strings.Split(jsxStr, "\n")
+	splits[1] = strings.Replace(splits[1], "return", "", 1)
+	jsxStr = strings.Join(splits[1:len(splits)-1], "\n")
+	jsxStr = strings.Replace(jsxStr, `Â`, "&Acirc;", -1)
+	//Remove Temporary file
+	err = os.Remove(srcFileName)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	aComponent.TemplateStr = jsxStr
+}
+
+func randomString(strlen int) string {
+	rand.Seed(time.Now().UTC().UnixNano())
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	result := make([]byte, strlen)
+	for i := 0; i < strlen; i++ {
+		result[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(result)
 }

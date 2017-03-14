@@ -1,4 +1,5 @@
 app.conf
+test/testjsx
 externalmocks.js
 .vscode
 *.html

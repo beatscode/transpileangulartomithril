@@ -362,7 +362,7 @@ angular.module('editorPanelApp').controller('doctorscontroller',['$scope', '$roo
 
 	    
 	$scope.savePhotoOrCVByDoctor = function (data) {
-		if ($scope.sDoctor.hasOwnProperty('id'))         {            
+		if ($scope.sDoctor.hasOwnProperty('id')) {            
 			var post = 'site_id=' + MN.site_id + "&";            
 			post += 'entity_id=' + $scope.sDoctor.id + "&";            
 			post += 'type=' + "doctor" + "&";            
