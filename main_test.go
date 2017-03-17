@@ -12,6 +12,72 @@ import (
 	"com.drleonardo/transpileangulartomithril/angular"
 )
 
+func TestServiceIntegration(t *testing.T) {
+	var vm = otto.New()
+	angularTemplateDir := "."
+	var app angular.App
+	app.VM = vm
+	app.TemplateDir = angularTemplateDir
+
+	componentString := `
+    angular.module('myApp',['helloModule','hello2Module']);
+	angular.module('myApp').service('testService',['$http',function($http){
+		function someFunction(){
+			console.log('Hi There');
+		}
+		var self = this;
+		self.dontSayAnything = function(){
+			return null;
+		}
+		return {
+			sayHello : function(){
+				someFunction();
+			},
+			dontSayHello : function (){
+				self.dontSayAnything();
+			}
+		}
+	}]);
+    angular.module('myApp').controller('testController',['$scope','my_Otherservice', 'testService', function($scope,my_Otherservice,testService){
+        $scope.myvar = "123";
+        $scope.list = [1,2,3,4,5];
+        $scope.getListItems = function(){
+            console.log($items)
+            $scope.list = []
+			testService.sayHello();
+        }
+    }]);
+    `
+	//Set proper mock of angular object
+	angularObj, _ := vm.Object(`angular = {}`)
+	angularObj.Set("module", app.Module)
+	angularObj.Set("controller", app.Controller)
+	angularObj.Set("service", app.Service)
+	//Run the file/string to build meta data for transpiling
+	if _, err := vm.Run(componentString); err != nil {
+		panic(err)
+	}
+
+	var aModule angular.Component
+	//	fmt.Println(angular)
+	var foundService bool
+	for _, module := range app.Components {
+		if module.Type == "controller" && module.Name == "testController" {
+			aModule = module
+		}
+		if module.Type == "service" && module.Name == "testService" {
+			foundService = true
+		}
+	}
+
+	if !foundService {
+		t.Error("Could not find service", aModule)
+	}
+
+	if len(app.Components) != 2 {
+		t.Error("Failed Parsing Components")
+	}
+}
 func TestScopeObject(t *testing.T) {
 
 	var vm = otto.New()
@@ -42,7 +108,6 @@ func TestScopeObject(t *testing.T) {
 	}
 
 	var aModule angular.Component
-	//	fmt.Println(angular)
 	for _, module := range app.Components {
 		if module.Type == "controller" && module.Name == "testController" {
 			aModule = module
@@ -141,7 +206,7 @@ func TestScopeFunctionBody(t *testing.T) {
 }
 func TestDoctorParse(t *testing.T) {
 	var configfile Config
-	configfile.TemplateDir = "./test/views/doctor.html"
+	configfile.TemplateDir = "./test/views"
 	configfile.ExternalMocksFilepath = "./externalmocks.js"
 	configfile.ScriptsDir = "./test/doctorcontroller.js"
 	fileBytes, err := ioutil.ReadFile(configfile.ExternalMocksFilepath)
@@ -152,7 +217,6 @@ func TestDoctorParse(t *testing.T) {
 
 	var aModule angular.Component
 	for _, module := range app.Components {
-		fmt.Println(aModule.Name)
 		if module.Type == "controller" && module.Name == "Doctorscontroller" {
 			aModule = module
 		}
@@ -161,7 +225,9 @@ func TestDoctorParse(t *testing.T) {
 	if aModule.Name != "Doctorscontroller" {
 		t.Error("Invalid Module Parsing", aModule.Name)
 	}
-
+	if len(aModule.TemplateStr) == 0 {
+		t.Error("Invalid Template Parsing")
+	}
 	buf := aModule.ExportController()
 
 	htmlStr := fmt.Sprintf(`<html>
@@ -275,6 +341,55 @@ func TestGetScopeValues(t *testing.T) {
 	}
 }
 
+func TestParseRouteprovider(t *testing.T) {
+	var vm = otto.New()
+	angularTemplateDir := "."
+	var app angular.App
+	app.VM = vm
+	app.TemplateDir = angularTemplateDir
+	app.ExternalMocks = `
+		admin_url = './tests/views/';
+		accountcontroller =	specialtycontroller = servicescontroller = null;
+	`
+	componentString := `
+  angular.module('editorPanelApp', ['ngRoute', 'myModule', 'myApp']).config(['$routeProvider',
+	function($routeProvider) {
+        "use strict";
+
+        $routeProvider.when('/account', {
+                templateUrl: admin_url + 'partials/office.html',
+                controller: accountcontroller
+            })
+            .
+
+        /* Options Panel */
+        when('/specialty', {
+                templateUrl: admin_url + 'partials/specialty.html',
+                controller: specialtycontroller
+            })
+            .
+        when('/services_procedures', {
+                templateUrl: admin_url + 'partials/services.html',
+                controller: servicescontroller
+        });
+	}]);
+
+    `
+	//Set proper mock of angular object
+	angularObj, _ := vm.Object(`angular = {}`)
+	angularRouteProvider, _ := vm.Object(`$routeProvider = {}`)
+	angularRouteProvider.Set("when", app.RegisterRoute)
+	angularObj.Set("module", app.Module)
+	angularObj.Set("controller", app.Controller)
+	angularObj.Set("service", app.Service)
+	angularObj.Set("config", app.Config)
+
+	//Run the file/string to build meta data for transpiling
+	if _, err := vm.Run(componentString); err != nil {
+		panic(err)
+	}
+
+}
 func TestDirectoryScanning(t *testing.T) {
 
 	angularTemplateDir := "."

@@ -202,7 +202,6 @@ func (aComponent *Component) ParseFunctionBodies() {
 		if function == "init" {
 			continue
 		}
-		//	functionVM = otto.New()
 		//Set Function Equal to var
 		functionAssignment := fmt.Sprintf(`var func = %s`, aComponent.FunctionBody)
 		aComponent.VM.Set("controllerFunction", functionAssignment)
@@ -298,7 +297,9 @@ func (aComponent *Component) ExportController() *bytes.Buffer {
 	}})
 	aComponent.ConvertAngularElements()
 	//TODO: See if we can convert to jsx here
-	tmpl, _ = tmpl.Parse(`var {{.ModelName}} = {
+	tmpl, _ = tmpl.Parse(`
+	
+	var {{.ModelName}} = {
 		{{range $key,$el := .ScopeObject}}
 			'{{$key}}':{{$el | parseVal}},
 		{{end}}
@@ -444,7 +445,7 @@ func (aComponent *Component) ConvertAngularElements() {
 
 	html2jsx, err := exec.LookPath("html2jsx")
 	if err != nil {
-		log.Fatal("installing lessc is in your future")
+		log.Fatal("Please install html2jsx (npm install -g html2jsx) to format html")
 	}
 
 	out, reterr := exec.Command(html2jsx, srcFileName).CombinedOutput()

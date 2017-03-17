@@ -113,15 +113,7 @@ func (angular *App) Controller(call otto.FunctionCall) otto.Value {
 	controllerName, _ := call.Argument(0).ToString()
 	argumentsStr, _ := call.Argument(1).ToString()
 
-	var functionBody string
-	funcSplit := strings.SplitN(argumentsStr, "function(", 2)
-
-	if len(funcSplit) == 1 {
-		funcSplit = strings.SplitN(argumentsStr, "function (", 2)
-	}
-	if len(funcSplit) >= 2 {
-		functionBody = fmt.Sprintf("function(%s", funcSplit[1])
-	}
+	functionBody := getFunctionBodyFromString(argumentsStr)
 	var dependencies []string
 	//Just In Case I need to get arguments
 	argList, _ := call.Argument(1).Export()
@@ -140,7 +132,8 @@ func (angular *App) Controller(call otto.FunctionCall) otto.Value {
 		log.Fatal(controllerName + " is not properly formed")
 	}
 	modelname := strings.Title(strings.Replace(strings.ToLower(controllerName), "controller", "", -1)) + "Model"
-	//fmt.Println("Length Of List", len(argList.([]interface{})))
+
+	//Create Controller Object
 	ctrl := Component{Name: strings.Title(controllerName), Type: "controller",
 		ModelName: modelname, FunctionBody: functionBody, Dependencies: dependencies, Module: angular, VM: call.Otto}
 	ctrl.FindTemplateString()
@@ -150,17 +143,91 @@ func (angular *App) Controller(call otto.FunctionCall) otto.Value {
 	ctrl.ParseFunctionBodies()
 	ctrl.RemoveScopeFunctionsFromScopeObjectInterface()
 
+	//Add to controller object
 	angular.Components = append(angular.Components, ctrl)
+
+	return otto.Value{}
+}
+func (angular *App) RegisterRoute(call otto.FunctionCall) otto.Value {
+	route, _ := call.Argument(0).ToString()
+	config, _ := call.Argument(1).Export()
+	// if value, ok := config.(map[string]interface{})["controller"]; ok {
+	// 	//fmt.Println("Controller Name", value.(string))
+	// }
+	if value, ok := config.(map[string]interface{})["templateUrl"]; ok {
+		fmt.Println("Template URL", value.(string))
+	}
+	fmt.Println(route)
+	v, _ := angular.VM.Get(`$routeProvider`)
+	return v
+}
+
+//Config parses app config function
+/*
+.....config(['$routeProvider',
+	function($routeProvider) {
+        "use strict";
+
+        $routeProvider.when('/account', {
+                templateUrl: admin_url + 'partials/office_info.html',
+                controller: accountcontroller
+            })..
+*/
+
+func (angular *App) Config(call otto.FunctionCall) otto.Value {
+	argumentsStr, _ := call.Argument(0).ToString()
+	var deps interface{}
+	var dependencies []string
+	fmt.Println(call.Argument(0))
+	if call.Argument(0).Class() == "Array" {
+		deps, _ = call.Argument(0).Export()
+
+		for _, el := range deps.([]interface{}) {
+			switch reflect.TypeOf(el).Kind() {
+			case reflect.String:
+				dependencies = append(dependencies, el.(string))
+				break
+			}
+		}
+
+	}
+	if strings.Contains(argumentsStr, "$routeProvider") {
+		//fmt.Println(argumentsStr)
+		functionBody := getFunctionBodyFromString(argumentsStr)
+		functionAssignment := fmt.Sprintf(`var func = %s`, functionBody)
+		angular.VM.Set("configFunction", functionAssignment)
+		//fmt.Println(functionBody)
+		functionEvalCode := fmt.Sprintf(`
+		//external mocks
+        %s
+		eval(configFunction)
+		func(%s)
+	`, angular.ExternalMocks, strings.Join(dependencies, ","))
+		fmt.Println(functionEvalCode)
+		if _, err := angular.VM.Run(functionEvalCode); err != nil {
+			//fmt.Println(functionEvalCode)
+			//log.Fatal(err.Error())
+			panic(err)
+		}
+	}
 
 	return otto.Value{}
 }
 func (angular *App) Service(call otto.FunctionCall) otto.Value {
 	serviceName, _ := call.Argument(0).ToString()
-	functionBody, _ := call.Argument(1).ToString()
+	argumentsStr, _ := call.Argument(1).ToString()
 
-	service := Component{Name: serviceName, Type: "service", FunctionBody: functionBody}
 	//TODO service are different than controllers
 	//parse the usual syntax properly
+	//May I should just extract the function from the service.
+	//Won't know what the style is to get more information
+	functionBody := getFunctionBodyFromString(argumentsStr)
+	//fmt.Println(functionBody)
+	service := Component{
+		Name:         serviceName,
+		Type:         "service",
+		FunctionBody: functionBody,
+	}
 	angular.Components = append(angular.Components, service)
 
 	return otto.Value{}
@@ -170,4 +237,17 @@ func checkErr(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func getFunctionBodyFromString(argumentsStr string) string {
+	var functionBody string
+	funcSplit := strings.SplitN(argumentsStr, "function(", 2)
+
+	if len(funcSplit) == 1 {
+		funcSplit = strings.SplitN(argumentsStr, "function (", 2)
+	}
+	if len(funcSplit) >= 2 {
+		functionBody = fmt.Sprintf("function(%s", funcSplit[1])
+	}
+	return functionBody
 }

@@ -18,9 +18,6 @@ var app angular.App
 var vm = otto.New()
 var configfile string
 
-/*
-angular.module('onBoardExpressApp').controller('onBoardSearchController', function ($scope, $rootScope, $window, onboard_express_service) {...
-*/
 func main() {
 	flag.StringVar(&configfile, "config", "app.conf", "Application Config")
 
